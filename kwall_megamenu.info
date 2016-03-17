@@ -1,0 +1,11 @@
+name = KWALL Megamenu
+dependencies[] = libraries
+description = Integration with the <a href="https://github.com/adobe-accessibility/Accessible-Mega-Menu">Accessible Mega Menu</a> jQuery plugin for mega menus.
+package = menu
+core = 7.x
+
+dependencies[] = block_class
+dependencies[] = jquery_update
+dependencies[] = menu_block
+dependencies[] = libraries
+dependencies[] = menu

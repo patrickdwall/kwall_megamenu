@@ -1,0 +1,387 @@
+<?php
+
+/**
+ * @file
+ * KWALL Megamenu code
+ */
+
+
+/**
+ * Implements hook_menu().
+ */
+function kwall_megamenu_menu() {
+  $items['<block>/%/%'] = array(
+    'title' => 'Block',
+    'description' => 'Block position in megamenu.',
+    'access arguments' => array('access content'),
+    'page callback' => 'drupal_goto',
+    'page arguments' => array('<front>'),
+    'type' => MENU_CALLBACK,
+    'file' => 'menu_position.admin.inc',
+  );
+  return $items;
+}
+
+/*
+ * Keep track of which menu blocks are megamenu blocks
+ */
+function kwall_megamenu_menu_blocks($delta = NULL) {
+  $deltas = &drupal_static(__FUNCTION__);
+
+  if (isset($delta)) {
+    $deltas[$delta] = $delta;
+  }
+
+  return $deltas;
+}
+
+/**
+ * Implements hook_block_view_alter().
+ */
+function kwall_megamenu_block_view_alter(&$data, $block) {
+  if (!empty($block->css_class)) {
+    $classes = explode(' ', trim($block->css_class));
+    if (in_array('accessible-mega-menu', $classes)) {
+      kwall_megamenu_menu_blocks($block->delta);
+      $data['content']['#attached']['library'][] = array('kwall_megamenu', 'kwall_megamenu',);
+      $data['content']['#attached']['library'][] = array('kwall_megamenu', 'accessible_mega_menu');
+
+      $data['content']['#theme'] = 'kwall_megamenu_wrapper';
+      $data['content']['#content']['#theme_wrappers'] = array(array('kwall_megamenu_tree'));
+
+      foreach($data['content']['#content'] as $mlid => &$item) {
+        if (is_numeric($mlid)) {
+          $item['#attributes']['class'][] = 'accessible-megamenu-top-nav-item';
+
+          if (!empty($item['#below'])) {
+            $group = array();
+            $groups = array();
+
+            foreach($item['#below'] as $sub_mlid => $child) {
+              if (is_numeric($sub_mlid)) {
+                // Is this item set to be the next group?
+                if (!empty($child['#localized_options']['attributes']['class']) && in_array('kwall-megamenu-next-group', $child['#localized_options']['attributes']['class']) && !empty($group)) {
+                  $groups[] = $group;
+                  $group = array();
+                }
+
+                // Add it to our group
+                $group[$sub_mlid] = $child;
+
+                // And remove the original
+                unset($item['#below'][$sub_mlid]);
+              }
+            }
+
+            // Add the last group to groups
+            if (!empty($group)) {
+              $groups[] = $group;
+            }
+
+            // Make sure we have some groups
+            if (!empty($groups)) {
+              $item['#below']['groups']['#sorted'] = TRUE;
+
+              // Then loop over them to render them
+              foreach($groups as $group) {
+                // Fix the first and last class for each group.
+                $first = NULL;
+                $sub_mlid = NULL;
+                $zebra = 0;
+                foreach($group as $sub_mlid => $child) {
+                  $classes = $child['#attributes']['class'];
+                  if ($key = in_array('first', $classes)) {
+                    unset($group[$sub_mlid]['#attributes']['class'][$key]);
+                  }
+                  if ($key = in_array('first', $classes)) {
+                    unset($group[$sub_mlid]['#attributes']['class'][$key]);
+                  }
+                  if (is_null($first)) {
+                    $first = $sub_mlid;
+                  }
+
+                  // Add zebra striping.
+                  $group[$sub_mlid]['#attributes']['class'][] = ($zebra++ % 2) ? 'odd' : 'even';
+                }
+                $last = $sub_mlid;
+
+                $group[$first]['#attributes']['class'][] = 'first';
+                $group[$last]['#attributes']['class'][] = 'last';
+
+                $item['#below']['groups'][] = array(
+                  '#sorted' => TRUE,
+                  '#theme_wrappers' => array(array('kwall_megamenu_group')),
+                ) + $group;
+              }
+
+              $item['#below']['#theme_wrappers'] = array(array('kwall_megamenu_group_wrapper'));
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Implements hook_theme().
+ */
+function kwall_megamenu_theme(&$existing, $type, $theme, $path) {
+  return array(
+   'kwall_megamenu_top_nav' => array(
+      'render element' => 'element',
+    ),
+   'kwall_megamenu_link' => array(
+      'render element' => 'element',
+    ),
+    'kwall_megamenu_tree' => array(
+      'render element' => 'tree',
+    ),
+    'kwall_megamenu_group_wrapper' => array(
+      'render element' => 'tree',
+    ),
+    'kwall_megamenu_group' => array(
+      'render element' => 'tree',
+    ),
+    'kwall_megamenu_wrapper' => array(
+      'template' => 'kwall-megamenu-wrapper',
+      'variables' => array('content' => array(), 'config' => array(), 'delta' => NULL),
+    ),
+  );
+}
+
+/*
+ * Helper function to load the block from a path
+ */
+function kwall_megamenu_block_load_from_path($path) {
+  $exploded = explode('/', $path);
+
+  if (count($exploded) >= 3) {
+    list(,$module,$delta) = $exploded;
+    return array($module, $delta);
+  }
+  return FALSE;
+}
+
+/**
+ * Implementation of hook_theme_registry_alter()
+ */
+function kwall_megamenu_theme_registry_alter(&$registry) {
+  $registry['kwall_megamenu_link_default'] = $registry['link'];
+  $registry['link']['function'] = 'kwall_megamenu_link';
+  $registry['kwall_megamenu_menu_link_default'] = $registry['menu_link'];
+  $registry['menu_link']['function'] = 'kwall_megamenu_menu_link';
+}
+
+/**
+ * Override of theme_link()
+ */
+function kwall_megamenu_link(array $variables) {
+  $output = '';
+  if (strpos($variables['path'], '<block>/') === 0) {
+    // We won't ever output our block in theme('link'), only theme('menu_link').
+    if (arg(0) == 'admin') {
+      // But we'll make an exception for the admin section
+      $output = $variables['text'];
+    }
+  }
+  else {
+    $output = theme('kwall_megamenu_link_default', $variables);
+  }
+
+  // Call the original theme function for normal menu link.
+  return $output;
+}
+
+/**
+ * Override theme_menu_link().
+ */
+function kwall_megamenu_menu_link(array $variables) {
+  $element = $variables['element'];
+  if (strpos($element['#href'], '<block>/') === 0) {
+    $output = '';
+
+    $deltas = kwall_megamenu_menu_blocks();
+    if (isset($element['#bid']['delta']) && array_key_exists($element['#bid']['delta'], $deltas)) {
+      if ($components = kwall_megamenu_block_load_from_path($element['#href'])) {
+        list($module, $delta) = $components;
+        if ($block = block_load($module, $delta)) {
+          $element['#attributes']['class'][] = 'kwall-megamenu-block';
+          $element['#attributes']['class'][] = 'kwall-megamenu-block-' . drupal_html_class($module . '-' . $delta);
+          $render = _block_get_renderable_array(_block_render_blocks(array($block)));
+          $output = '<li' . drupal_attributes($element['#attributes']) . '>' . drupal_render($render) . "</li>\n";;
+        }
+      }
+    }
+  }
+  else {
+    $output = theme('kwall_megamenu_menu_link_default', $variables);
+  }
+
+  return $output;
+}
+
+/**
+ * Implements template_preprocess_HOOK() for theme_menu_tree().
+ */
+function template_preprocess_kwall_megamenu_tree(&$variables) {
+  $variables['tree'] = $variables['tree']['#children'];
+}
+
+/**
+ * Returns HTML for a wrapper for a menu sub-tree.
+ *
+ * @param $variables
+ *   An associative array containing:
+ *   - tree: An HTML string containing the tree's items.
+ *
+ * @see template_preprocess_menu_tree()
+ * @ingroup themeable
+ */
+function theme_kwall_megamenu_tree($variables) {
+  return '<ul class="accessible-megamenu">' . $variables['tree'] . '</ul>';
+}
+
+/**
+ * Implements template_preprocess_HOOK() for theme_menu_tree().
+ */
+function template_preprocess_kwall_megamenu_group_wrapper(&$variables) {
+  $variables['tree'] = $variables['tree']['#children'];
+}
+
+/**
+ * Returns HTML for a wrapper for a menu sub-tree.
+ *
+ * @param $variables
+ *   An associative array containing:
+ *   - tree: An HTML string containing the tree's items.
+ *
+ * @see template_preprocess_menu_tree()
+ * @ingroup themeable
+ */
+function theme_kwall_megamenu_group_wrapper($variables) {
+  return '<div class="accessible-megamenu-panel">' . $variables['tree'] . '</div>';
+}
+
+/**
+ * Implements template_preprocess_HOOK() for theme_menu_tree().
+ */
+function template_preprocess_kwall_megamenu_group(&$variables) {
+  $variables['tree'] = $variables['tree']['#children'];
+}
+
+/**
+ * Returns HTML for a wrapper for a menu sub-tree.
+ *
+ * @param $variables
+ *   An associative array containing:
+ *   - tree: An HTML string containing the tree's items.
+ *
+ * @see template_preprocess_menu_tree()
+ * @ingroup themeable
+ */
+function theme_kwall_megamenu_group($variables) {
+  return '<ul class="accessible-megamenu-panel-group">' . $variables['tree'] . '</ul>';
+}
+
+/**
+ * Returns HTML for a menu link and submenu.
+ *
+ * @param $variables
+ *   An associative array containing:
+ *   - element: Structured array data for a menu link.
+ *
+ * @ingroup themeable
+ */
+function theme_kwall_megamenu_top_nav(array $variables) {
+  $element = $variables['element'];
+  $sub_menu = '';
+
+  if ($element['#below']) {
+    $sub_menu = drupal_render($element['#below']);
+  }
+  $output = l($element['#title'], $element['#href'], $element['#localized_options']);
+  return '<li' . drupal_attributes($element['#attributes']) . '>' . $output . $sub_menu . "</li>\n";
+}
+
+/**
+ * Process variables for menu-block-wrapper.tpl.php.
+ *
+ * @see menu-block-wrapper.tpl.php
+ */
+function template_preprocess_kwall_megamenu_wrapper(&$variables) {
+  $config = menu_block_get_config($variables['delta']);
+  if (empty($variables['config'])) {
+    $variables['config'] = $config;
+  }
+  $variables['classes_array'][] = 'menu-block-' . $variables['delta'];
+  $variables['classes_array'][] = 'menu-name-' . $variables['config']['menu_name'];
+  $variables['classes_array'][] = 'parent-mlid-' . $variables['config']['parent_mlid'];
+  $variables['classes_array'][] = 'menu-level-' . $variables['config']['level'];
+}
+
+/**
+ * Implements hook_library().
+ */
+function kwall_megamenu_library() {
+  if ($lib = libraries_detect('accessible_mega_menu')) {
+    $library['accessible_mega_menu'] = array(
+      'title' => t($lib['name']),
+      'website' => $lib['vendor url'],
+      'version' => $lib['version'],
+      'js' => array(
+        array(
+          'data' => $lib['library path'] . '/js/jquery-accessibleMegaMenu.js',
+          'type' => 'file',
+          'scope' => 'footer',
+        ),
+      ),
+      'css' => array(
+        array(
+          'data' => $lib['library path'] . '/css/megamenu.css',
+          'type' => 'file',
+        ),
+      ),
+    );
+  }
+  $library['kwall_megamenu'] = array(
+    'title' => t('KWALL Megamenu'),
+    'version' => '1.0',
+    'js' => array(
+      array('data' => drupal_get_path('module', 'kwall_megamenu') . '/kwall_megamenu.js', 'type' => 'file'),
+    ),
+    'css' => array(
+      array('data' => drupal_get_path('module', 'kwall_megamenu') . '/kwall_megamenu.css', 'type' => 'file'),
+    ),
+    'dependencies' => array(
+      array('kwall_megamenu', 'accessible_mega_menu'),
+    ),
+  );
+
+  return $library;
+}
+
+/**
+ * Implements hook_libraries_info().
+ */
+function kwall_megamenu_libraries_info() {
+  $libraries['accessible_mega_menu'] = array(
+    'name' => 'Accessible Mega Menu jQuery plugin',
+    'vendor url' => 'http://adobe-accessibility.github.io/Accessible-Mega-Menu',
+    'download url' => 'https://github.com/adobe-accessibility/Accessible-Mega-Menu',
+    'version arguments' => array(
+      'file' => 'js/jquery-accessibleMegaMenu.js',
+      'pattern' => '/version ([0-9a-zA-Z\.-]+)/',
+      'lines' => 50,
+    ),
+    'files' => array(
+      'css' => array(
+        'css/megamenu.css',
+      ),
+      'js' => array(
+        'js/jquery-accessibleMegaMenu.js' => array('scope' => 'footer'),
+      ),
+    ),
+  );
+  return $libraries;
+}
